@@ -1,0 +1,26 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python cache & virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.pytest_cache/
+
+# Node / Build output
+node_modules/
+dist/
+
+# IDE & OS generated files
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Temporary uploaded files
+tmp/
+temp/
