@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import logging
 from dotenv import load_dotenv
 from openai import OpenAI
 from app.models.content import GenerateContentRequest, GeneratedContentResponse
@@ -7,6 +9,8 @@ from app.core.industry_strategies import get_industry_strategy
 
 # Load environment variables from .env if present
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 def get_ai_client_and_model():
     """
@@ -20,17 +24,65 @@ def get_ai_client_and_model():
     if not api_key:
         raise RuntimeError("AI API key is not configured.")
 
+    # Determine if configuration targets Gemini
+    is_gemini = False
+    if os.getenv("GEMINI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
+        is_gemini = True
+    elif base_url and "generativelanguage.googleapis.com" in base_url:
+        is_gemini = True
+    elif model_name and "gemini" in model_name.lower():
+        is_gemini = True
+
+    if is_gemini and not base_url:
+        base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
     if not model_name:
-        if base_url and "generativelanguage.googleapis.com" in base_url:
-            model_name = "gemini-2.5-flash"
-        elif os.getenv("GEMINI_API_KEY") and not os.getenv("OPENAI_API_KEY"):
-            base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+        if is_gemini:
             model_name = "gemini-2.5-flash"
         else:
             model_name = "gpt-4o-mini"
 
     client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     return client, model_name
+
+def extract_json_payload(raw_text: str) -> dict:
+    """
+    Safely extract and parse JSON payload from raw LLM output.
+    Handles raw JSON, markdown code blocks (```json ... ```), leading/trailing text,
+    and missing outer structure.
+    """
+    if not raw_text or not raw_text.strip():
+        raise ValueError("Empty response from AI")
+
+    text = raw_text.strip()
+
+    # 1. Try extracting from markdown code blocks first
+    code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if code_block_match:
+        text = code_block_match.group(1).strip()
+    else:
+        # 2. Fallback: find outer-most JSON object boundaries { ... }
+        start_idx = text.find("{")
+        end_idx = text.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            text = text[start_idx:end_idx + 1].strip()
+
+    # 3. Parse JSON
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode failed: {e}. Raw content snippet: {raw_text[:200]}")
+        raise ValueError(f"Invalid JSON format from AI: {e}")
+
+    # 4. Handle outer wrapper dictionary if LLM wrapped response in a single key e.g. {"content_plan": {...}}
+    if isinstance(data, dict):
+        if "posts" not in data:
+            for key in ["content_plan", "data", "result", "response"]:
+                if key in data and isinstance(data[key], dict) and "posts" in data[key]:
+                    data = data[key]
+                    break
+
+    return data
 
 def build_system_and_user_prompt(request: GenerateContentRequest, strategy: dict) -> tuple[str, str]:
     """
@@ -195,32 +247,41 @@ def generate_content(request: GenerateContentRequest) -> GeneratedContentRespons
         )
     except RuntimeError:
         raise
-    except Exception:
+    except Exception as e:
+        logger.error(f"AI chat completion API call failed: {e}")
         raise RuntimeError("AI generation failed. Please try again.")
 
     content = response.choices[0].message.content
     if not content or not content.strip():
+        logger.error("AI returned empty content.")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
-    content = content.strip()
-
-    # Clean potential markdown block formatting if present
-    if content.startswith("```"):
-        lines = content.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        content = "\n".join(lines).strip()
-
-    # Validate with Pydantic
     try:
-        validated_response = GeneratedContentResponse.model_validate_json(content)
-    except Exception:
-        raise RuntimeError("AI returned an invalid content plan. Please try again.")
+        raw_json_dict = extract_json_payload(content)
 
-    # Enforce exact post_count matching
-    if len(validated_response.posts) != request.post_count:
+        # Normalize field names if Gemini returned post_count instead of total_posts
+        if isinstance(raw_json_dict, dict):
+            if "total_posts" not in raw_json_dict and "post_count" in raw_json_dict:
+                raw_json_dict["total_posts"] = raw_json_dict["post_count"]
+
+            # Adjust post list length if Gemini generated extra or missing posts
+            if "posts" in raw_json_dict and isinstance(raw_json_dict["posts"], list):
+                posts_list = raw_json_dict["posts"]
+                if len(posts_list) > request.post_count:
+                    raw_json_dict["posts"] = posts_list[:request.post_count]
+                elif len(posts_list) < request.post_count and len(posts_list) > 0:
+                    last_post = posts_list[-1]
+                    for idx in range(len(posts_list) + 1, request.post_count + 1):
+                        padded = dict(last_post)
+                        padded["post_number"] = idx
+                        padded["day"] = f"Day {idx}"
+                        raw_json_dict["posts"].append(padded)
+
+                raw_json_dict["total_posts"] = request.post_count
+
+        validated_response = GeneratedContentResponse.model_validate(raw_json_dict)
+    except Exception as e:
+        logger.error(f"Failed to validate AI content plan: {e}")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
     return validated_response
@@ -288,26 +349,20 @@ Return ONLY a raw valid JSON object matching this schema:
         )
     except RuntimeError:
         raise
-    except Exception:
+    except Exception as e:
+        logger.error(f"AI single post chat completion failed: {e}")
         raise RuntimeError("AI generation failed. Please try again.")
 
     content = response.choices[0].message.content
     if not content or not content.strip():
+        logger.error("AI returned empty single post response.")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
-    content = content.strip()
-
-    if content.startswith("```"):
-        lines = content.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        content = "\n".join(lines).strip()
-
     try:
-        validated_post = GeneratedPost.model_validate_json(content)
-    except Exception:
+        raw_json_dict = extract_json_payload(content)
+        validated_post = GeneratedPost.model_validate(raw_json_dict)
+    except Exception as e:
+        logger.error(f"Failed to validate single post regeneration: {e}")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
     return validated_post

@@ -62,6 +62,12 @@ class ContentStrategy(BaseModel):
     tone: str
     content_pillars: List[str]
 
+    @field_validator('content_pillars', mode='before')
+    def validate_content_pillars(cls, v):
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(',') if p.strip()]
+        return v
+
 class GeneratedPost(BaseModel):
     post_number: int
     day: str
@@ -69,6 +75,16 @@ class GeneratedPost(BaseModel):
     caption: str
     visual_direction: str
     hashtags: List[str]
+
+    @field_validator('hashtags', mode='before')
+    def validate_hashtags(cls, v):
+        if isinstance(v, str):
+            import re
+            tags = re.findall(r'#?\w+', v)
+            return [t if t.startswith('#') else f'#{t}' for t in tags]
+        elif isinstance(v, list):
+            return [str(t) if str(t).startswith('#') else f'#{t}' for t in v]
+        return v
 
 class GeneratedContentResponse(BaseModel):
     industry: str
