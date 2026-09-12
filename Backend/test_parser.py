@@ -142,5 +142,75 @@ Hope this helps your marketing team!"""
         caption = res["posts"][0]["caption"]
         self.assertIn("http://example.com/property", caption)
 
+    def test_L_literal_newline_in_caption(self):
+        raw = """{
+  "industry": "Real Estate",
+  "duration": "1 Week",
+  "platform": "Instagram",
+  "total_posts": 1,
+  "content_strategy": {"target_audience": "Buyers", "tone": "Friendly", "content_pillars": ["Showcase"]},
+  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Showcase", "caption": "Welcome to luxury living.
+Second line of caption.", "visual_direction": "Room", "hashtags": ["#home"]}]
+}"""
+        res = extract_json_payload(raw)
+        caption = res["posts"][0]["caption"]
+        self.assertIn("\nSecond line of caption.", caption)
+
+    def test_M_multiple_literal_paragraph_breaks(self):
+        raw = """{
+  "industry": "Real Estate",
+  "duration": "1 Week",
+  "platform": "Instagram",
+  "total_posts": 1,
+  "content_strategy": {"target_audience": "Buyers", "tone": "Friendly", "content_pillars": ["Showcase"]},
+  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Showcase", "caption": "Hook line here!
+
+Body line here with spacing!
+
+CTA line here!", "visual_direction": "Room", "hashtags": ["#home"]}]
+}"""
+        res = extract_json_payload(raw)
+        caption = res["posts"][0]["caption"]
+        self.assertIn("Hook line here!\n\nBody line here", caption)
+
+    def test_N_already_escaped_newline_not_double_escaped(self):
+        raw = """{
+  "industry": "Real Estate",
+  "duration": "1 Week",
+  "platform": "Instagram",
+  "total_posts": 1,
+  "content_strategy": {"target_audience": "Buyers", "tone": "Friendly", "content_pillars": ["Showcase"]},
+  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Showcase", "caption": "First line\\nSecond line", "visual_direction": "Room", "hashtags": ["#home"]}]
+}"""
+        res = extract_json_payload(raw)
+        caption = res["posts"][0]["caption"]
+        self.assertEqual(caption, "First line\nSecond line")
+
+    def test_O_escaped_quotes_in_string(self):
+        raw = """{
+  "industry": "Real Estate",
+  "duration": "1 Week",
+  "platform": "Instagram",
+  "total_posts": 1,
+  "content_strategy": {"target_audience": "Buyers", "tone": "Friendly", "content_pillars": ["Showcase"]},
+  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Showcase", "caption": "Featured in \\"Architectural Digest\\" magazine!", "visual_direction": "Room", "hashtags": ["#home"]}]
+}"""
+        res = extract_json_payload(raw)
+        caption = res["posts"][0]["caption"]
+        self.assertIn('"Architectural Digest"', caption)
+
+    def test_P_https_url_remains_unchanged(self):
+        raw = """{
+  "industry": "Real Estate",
+  "duration": "1 Week",
+  "platform": "Instagram",
+  "total_posts": 1,
+  "content_strategy": {"target_audience": "Buyers", "tone": "Friendly", "content_pillars": ["Showcase"]},
+  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Showcase", "caption": "Visit https://luxuryrealestate.com/123-main-st for listing!", "visual_direction": "Room", "hashtags": ["#home"]}]
+}"""
+        res = extract_json_payload(raw)
+        caption = res["posts"][0]["caption"]
+        self.assertEqual(caption, "Visit https://luxuryrealestate.com/123-main-st for listing!")
+
 if __name__ == "__main__":
     unittest.main()

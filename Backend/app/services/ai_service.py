@@ -47,13 +47,16 @@ def get_ai_client_and_model():
 
 def strip_json_comments_and_sanitize(text: str) -> str:
     """
-    State-machine based comment stripper that safely strips:
-    - Single-line comments // ...
-    - Block comments /* ... */
-    - Trailing commas before } or ]
-    
-    CRITICAL: Ignores // and /* inside quoted JSON strings, strictly preserving
-    URLs like "https://example.com" or "http://example.com".
+    State-machine based comment stripper & JSON control character sanitizer that:
+    - Strips single-line comments // ...
+    - Strips block comments /* ... */
+    - Cleans trailing commas before } or ]
+    - Escapes literal unescaped control characters (< 0x20) inside double-quoted JSON strings:
+      * Converts literal \n (0x0A) to \\n
+      * Converts literal \r (0x0D) to \\r
+      * Converts literal \t (0x09) to \\t
+    - CRITICAL: Ignores //, /*, and control characters inside already-escaped sequences or URLs,
+      preventing double-escaping of existing \\n, \\r, \\", \\\\, etc.
     """
     result = []
     i = 0
@@ -65,15 +68,41 @@ def strip_json_comments_and_sanitize(text: str) -> str:
         char = text[i]
 
         if in_string:
-            result.append(char)
             if escape:
+                result.append(char)
                 escape = False
+                i += 1
+                continue
             elif char == '\\':
+                result.append(char)
                 escape = True
+                i += 1
+                continue
             elif char == '"':
                 in_string = False
-            i += 1
-            continue
+                result.append(char)
+                i += 1
+                continue
+            elif char == '\n':
+                result.append('\\n')
+                i += 1
+                continue
+            elif char == '\r':
+                result.append('\\r')
+                i += 1
+                continue
+            elif char == '\t':
+                result.append('\\t')
+                i += 1
+                continue
+            elif ord(char) < 32:
+                result.append(f'\\u{ord(char):04x}')
+                i += 1
+                continue
+            else:
+                result.append(char)
+                i += 1
+                continue
 
         if char == '"':
             in_string = True
