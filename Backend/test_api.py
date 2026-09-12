@@ -99,12 +99,14 @@ class TestContentPlatformAPI(unittest.TestCase):
             mock_json_str = self._create_mock_ai_response(industry, duration, expected_count, "Instagram")
 
             # Mock OpenAI ChatCompletion response
+            mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
             mock_completion = MagicMock()
             mock_completion.choices = [MagicMock()]
+            mock_completion.choices[0].message.parsed = mock_parsed_obj
             mock_completion.choices[0].message.content = mock_json_str
 
             with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-                 patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+                 patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
                 
                 payload = {
                     "industry": industry,

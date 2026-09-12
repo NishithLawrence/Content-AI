@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from app.main import app
 from app.file_processing.extractor import extract_file_content, extract_reference_context
+from app.models.content import GeneratedContentResponse
 
 client = TestClient(app)
 
@@ -102,12 +103,14 @@ class TestReferenceFileIntelligence(unittest.TestCase):
             ]
         })
 
+        mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.parsed = mock_parsed_obj
         mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
             
             response = client.post(
                 "/api/generate-content",
@@ -177,12 +180,14 @@ class TestReferenceFileIntelligence(unittest.TestCase):
             ]
         })
 
+        mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.parsed = mock_parsed_obj
         mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
             
             response = client.post(
                 "/api/generate-content",
@@ -250,12 +255,14 @@ class TestReferenceFileIntelligence(unittest.TestCase):
             ]
         })
 
+        mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.parsed = mock_parsed_obj
         mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
             
             response = client.post(
                 "/api/generate-content",
@@ -322,12 +329,14 @@ class TestReferenceFileIntelligence(unittest.TestCase):
             ]
         })
 
+        mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.parsed = mock_parsed_obj
         mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
             
             response = client.post(
                 "/api/generate-content",
@@ -388,12 +397,14 @@ class TestReferenceFileIntelligence(unittest.TestCase):
             ]
         })
 
+        mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.parsed = mock_parsed_obj
         mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
             
             response = client.post(
                 "/api/generate-content",
@@ -475,12 +486,14 @@ class TestReferenceFileIntelligence(unittest.TestCase):
             ]
         })
 
+        mock_parsed_obj = GeneratedContentResponse.model_validate_json(mock_json_str)
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.parsed = mock_parsed_obj
         mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.Completions.create", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
             
             response = client.post(
                 "/api/generate-content",
