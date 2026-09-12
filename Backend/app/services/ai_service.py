@@ -49,7 +49,7 @@ def extract_json_payload(raw_text: str) -> dict:
     """
     Safely extract and parse JSON payload from raw LLM output.
     Handles raw JSON, markdown code blocks (```json ... ```), leading/trailing text,
-    and missing outer structure.
+    JS comments, trailing commas, and missing outer structure.
     """
     if not raw_text or not raw_text.strip():
         raise ValueError("Empty response from AI")
@@ -67,14 +67,19 @@ def extract_json_payload(raw_text: str) -> dict:
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             text = text[start_idx:end_idx + 1].strip()
 
-    # 3. Parse JSON
+    # 3. Clean JS comments and trailing commas that Gemini occasionally outputs
+    text = re.sub(r'^\s*//.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'/\*[\s\S]*?\*/', '', text)
+    text = re.sub(r',\s*([\}\]])', r'\1', text)
+
+    # 4. Parse JSON
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
-        logger.error(f"JSON decode failed: {e}. Raw content snippet: {raw_text[:200]}")
+        logger.error(f"7. Extracted JSON Is Valid: False. Parsing Error: {e}. Raw content snippet: {raw_text[:200]}")
         raise ValueError(f"Invalid JSON format from AI: {e}")
 
-    # 4. Handle outer wrapper dictionary if LLM wrapped response in a single key e.g. {"content_plan": {...}}
+    # 5. Handle outer wrapper dictionary if LLM wrapped response in a single key e.g. {"content_plan": {...}}
     if isinstance(data, dict):
         if "posts" not in data:
             for key in ["content_plan", "data", "result", "response"]:
@@ -155,7 +160,7 @@ ANTI-GENERIC QUALITY RULES:
 5. Visual directions must be vivid and specific to the {strategy['industry_name']} sector.
 
 REQUIRED STRUCTURED JSON OUTPUT SCHEME:
-Return ONLY a raw valid JSON object (no markdown, no code block wrappers) matching this schema:
+Return ONLY a raw valid JSON object matching this schema (MUST contain exactly {request.post_count} post objects in the posts array):
 
 {{
   "industry": "{strategy['industry_name']}",
@@ -168,7 +173,6 @@ Return ONLY a raw valid JSON object (no markdown, no code block wrappers) matchi
     "content_pillars": [3 to 5 chosen pillar names]
   }},
   "posts": [
-    // MUST contain exactly {request.post_count} post objects
     {{
       "post_number": 1,
       "day": "Day 1",
@@ -248,16 +252,43 @@ def generate_content(request: GenerateContentRequest) -> GeneratedContentRespons
     except RuntimeError:
         raise
     except Exception as e:
-        logger.error(f"AI chat completion API call failed: {e}")
+        logger.error(f"1. HTTP/API Response Failure: {e}")
         raise RuntimeError("AI generation failed. Please try again.")
 
-    content = response.choices[0].message.content
-    if not content or not content.strip():
-        logger.error("AI returned empty content.")
+    logger.info("=== GEMINI DIAGNOSTIC RESPONSE AUDIT START ===")
+    logger.info(f"1. API Response Received: {response is not None}")
+    
+    content = response.choices[0].message.content if (response and response.choices) else None
+    
+    logger.info(f"2. Response Content Type: {type(content).__name__}")
+    
+    is_empty = not content or not content.strip()
+    logger.info(f"4. Response Is Empty: {is_empty}")
+
+    if not is_empty:
+        has_fences = "```" in content
+        has_json_fence = "```json" in content.lower()
+        logger.info(f"5. Contains Code Fences: {has_fences} (JSON fence: {has_json_fence})")
+
+        first_brace = content.find("{")
+        last_brace = content.rfind("}")
+        first_fence = content.find("```")
+        has_pre_text = (first_fence > 0) if has_fences else (first_brace > 0)
+        has_post_text = (last_brace != -1 and last_brace < len(content.strip()) - 1)
+        logger.info(f"6. Contains Explanatory Pre-text: {has_pre_text}, Post-text: {has_post_text}")
+
+        # Redact any accidental secret strings if present
+        safe_snippet = re.sub(r'AIzaSy[A-Za-z0-9_-]{33}', '[REDACTED_KEY]', content)
+        logger.info(f"3. Returned Text Structure Preview (Start): {safe_snippet[:250]!r}")
+        logger.info(f"3. Returned Text Structure Preview (End): {safe_snippet[-200:]!r}")
+
+    if is_empty:
+        logger.error("AI returned empty response content.")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
     try:
         raw_json_dict = extract_json_payload(content)
+        logger.info("7. Extracted JSON Is Valid: True")
 
         # Normalize field names if Gemini returned post_count instead of total_posts
         if isinstance(raw_json_dict, dict):
@@ -280,10 +311,12 @@ def generate_content(request: GenerateContentRequest) -> GeneratedContentRespons
                 raw_json_dict["total_posts"] = request.post_count
 
         validated_response = GeneratedContentResponse.model_validate(raw_json_dict)
+        logger.info("8. Pydantic Validation Result: SUCCESS")
     except Exception as e:
-        logger.error(f"Failed to validate AI content plan: {e}")
+        logger.error(f"8. Exact Pydantic Validation Error: {e}")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
+    logger.info("=== GEMINI DIAGNOSTIC RESPONSE AUDIT END ===")
     return validated_response
 
 def regenerate_single_post(request: "RegeneratePostRequest") -> "GeneratedPost":
