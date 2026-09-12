@@ -212,96 +212,94 @@ CTA line here!", "visual_direction": "Room", "hashtags": ["#home"]}]
         caption = res["posts"][0]["caption"]
         self.assertEqual(caption, "Visit https://luxuryrealestate.com/123-main-st for listing!")
 
-    def test_Q_structured_generate_content_parsed_success(self):
+    def test_Q_json_object_generate_content_success(self):
         from unittest.mock import patch, MagicMock
-        from app.models.content import GenerateContentRequest, GeneratedContentResponse, ContentStrategy, GeneratedPost
+        from app.models.content import GenerateContentRequest
         from app.services.ai_service import generate_content
 
-        mock_obj = GeneratedContentResponse(
-            industry="Real Estate",
-            duration="1 Week",
-            platform="Instagram",
-            total_posts=3,
-            content_strategy=ContentStrategy(
-                target_audience="Buyers",
-                tone="Professional",
-                content_pillars=["Showcase"]
-            ),
-            posts=[
-                GeneratedPost(
-                    post_number=1,
-                    day="Day 1",
-                    content_pillar="Showcase",
-                    caption="Structured caption",
-                    visual_direction="Living room",
-                    hashtags=["#realestate"]
-                )
-            ]
-        )
-
+        mock_json_str = """{
+  "industry": "Real Estate",
+  "duration": "1 Week",
+  "platform": "Instagram",
+  "total_posts": 3,
+  "content_strategy": {
+    "target_audience": "Buyers",
+    "tone": "Professional",
+    "content_pillars": ["Showcase"]
+  },
+  "posts": [
+    {
+      "post_number": 1,
+      "day": "Day 1",
+      "content_pillar": "Showcase",
+      "caption": "JSON mode caption for Real Estate.",
+      "visual_direction": "Living room",
+      "hashtags": ["#realestate"]
+    }
+  ]
+}"""
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
-        mock_completion.choices[0].message.parsed = mock_obj
+        mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.create", return_value=mock_completion):
             req = GenerateContentRequest(industry="Real Estate", duration="1 Week", post_count=3, platform="Instagram")
             res = generate_content(req)
             self.assertEqual(res.industry, "Real Estate")
             self.assertEqual(res.total_posts, 3)
             self.assertEqual(len(res.posts), 3)
-            self.assertEqual(res.posts[0].caption, "Structured caption")
+            self.assertEqual(res.posts[0].caption, "JSON mode caption for Real Estate.")
 
-    def test_R_structured_regenerate_single_post_parsed_success(self):
+    def test_R_json_object_regenerate_single_post_success(self):
         from unittest.mock import patch, MagicMock
-        from app.models.content import RegeneratePostRequest, GeneratedPost
+        from app.models.content import RegeneratePostRequest
         from app.services.ai_service import regenerate_single_post
 
-        mock_post = GeneratedPost(
-            post_number=1,
-            day="Day 1",
-            content_pillar="Showcase",
-            caption="Fresh single post caption",
-            visual_direction="Living room",
-            hashtags=["#fresh"]
-        )
-
+        mock_json_str = """{
+  "post_number": 1,
+  "day": "Day 1",
+  "content_pillar": "Showcase",
+  "caption": "Fresh single post caption in JSON mode.",
+  "visual_direction": "Living room angle",
+  "hashtags": ["#fresh", "#luxury"]
+}"""
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
-        mock_completion.choices[0].message.parsed = mock_post
+        mock_completion.choices[0].message.content = mock_json_str
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
+             patch("openai.resources.chat.completions.completions.Completions.create", return_value=mock_completion):
             req = RegeneratePostRequest(industry="Real Estate", platform="Instagram", duration="1 Week", post_number=1, day="Day 1", content_pillar="Showcase")
             res = regenerate_single_post(req)
-            self.assertEqual(res.caption, "Fresh single post caption")
-            self.assertEqual(res.hashtags, ["#fresh"])
+            self.assertEqual(res.caption, "Fresh single post caption in JSON mode.")
+            self.assertEqual(res.hashtags, ["#fresh", "#luxury"])
 
-    def test_S_fallback_when_parsed_is_none(self):
+    def test_S_json_object_multiline_captions_and_grounding(self):
         from unittest.mock import patch, MagicMock
         from app.models.content import GenerateContentRequest
         from app.services.ai_service import generate_content
 
-        mock_raw_json = """{
-  "industry": "Real Estate",
-  "duration": "1 Week",
-  "platform": "Instagram",
-  "total_posts": 3,
-  "content_strategy": {"target_audience": "Buyers", "tone": "Friendly", "content_pillars": ["Showcase"]},
-  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Showcase", "caption": "Fallback caption", "visual_direction": "Room", "hashtags": ["#home"]}]
-}"""
+        mock_raw_json = "{\n" \
+                        '  "industry": "Jewellery",\n' \
+                        '  "duration": "1 Week",\n' \
+                        '  "platform": "Instagram",\n' \
+                        '  "total_posts": 3,\n' \
+                        '  "content_strategy": {"target_audience": "Collectors", "tone": "Elegant", "content_pillars": ["Craftsmanship"]},\n' \
+                        '  "posts": [{"post_number": 1, "day": "Day 1", "content_pillar": "Craftsmanship", "caption": "Line 1 hook.\\nLine 2 body for Aurelia Jewels in Chennai.\\nLine 3 CTA.", "visual_direction": "Close-up", "hashtags": ["#jewels"]}]\n' \
+                        '}'
 
         mock_completion = MagicMock()
         mock_completion.choices = [MagicMock()]
-        mock_completion.choices[0].message.parsed = None
         mock_completion.choices[0].message.content = mock_raw_json
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key-12345"}), \
-             patch("openai.resources.chat.completions.completions.Completions.parse", return_value=mock_completion):
-            req = GenerateContentRequest(industry="Real Estate", duration="1 Week", post_count=3, platform="Instagram")
+             patch("openai.resources.chat.completions.completions.Completions.create", return_value=mock_completion):
+            req = GenerateContentRequest(industry="Jewellery", duration="1 Week", post_count=3, platform="Instagram")
             res = generate_content(req)
-            self.assertEqual(res.industry, "Real Estate")
-            self.assertEqual(res.posts[0].caption, "Fallback caption")
+            self.assertEqual(res.industry, "Jewellery")
+            self.assertIn("Aurelia Jewels in Chennai", res.posts[0].caption)
+            self.assertIn("Line 1 hook.", res.posts[0].caption)
 
 if __name__ == "__main__":
     unittest.main()

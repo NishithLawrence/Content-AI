@@ -310,8 +310,8 @@ def generate_mock_single_post(request: "RegeneratePostRequest", strategy: dict) 
 def generate_content(request: GenerateContentRequest) -> GeneratedContentResponse:
     """
     Main service function to generate, validate, and return structured AI content.
-    Uses OpenAI SDK's client.beta.chat.completions.parse with Pydantic response_format
-    as primary path, with extract_json_payload as last-resort fallback.
+    Uses client.chat.completions.create with response_format={"type": "json_object"}
+    followed by extract_json_payload and Pydantic schema validation.
     """
     strategy = get_industry_strategy(request.industry)
     use_mock = os.getenv("AI_USE_MOCK", "false").lower() in ("true", "1", "t", "yes")
@@ -322,41 +322,42 @@ def generate_content(request: GenerateContentRequest) -> GeneratedContentRespons
     client, model_name = get_ai_client_and_model()
     system_prompt, user_prompt = build_system_and_user_prompt(request, strategy)
 
-    validated_response = None
-
     try:
-        completion = client.beta.chat.completions.parse(
+        response = client.chat.completions.create(
             model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            response_format=GeneratedContentResponse,
+            response_format={"type": "json_object"},
             temperature=0.7,
             max_tokens=3000
         )
-        if completion and completion.choices:
-            message = completion.choices[0].message
-            if getattr(message, "parsed", None) is not None:
-                validated_response = message.parsed
-                logger.info("Structured Output Primary Path: Parsed GeneratedContentResponse object successfully returned.")
-            elif getattr(message, "content", None):
-                logger.warning("Structured Output Primary Path: message.parsed was None. Falling back to extract_json_payload.")
-                raw_json_dict = extract_json_payload(message.content)
-                if isinstance(raw_json_dict, dict):
-                    if "total_posts" not in raw_json_dict and "post_count" in raw_json_dict:
-                        raw_json_dict["total_posts"] = raw_json_dict["post_count"]
-                    if "posts" in raw_json_dict and isinstance(raw_json_dict["posts"], dict):
-                        raw_json_dict["posts"] = list(raw_json_dict["posts"].values())
-                validated_response = GeneratedContentResponse.model_validate(raw_json_dict)
     except RuntimeError:
         raise
     except Exception as e:
         logger.error(f"AI chat completion API call failed: {e}")
         raise RuntimeError("AI generation failed. Please try again.")
 
-    if not validated_response:
-        logger.error("AI returned empty content or unparseable plan.")
+    content = response.choices[0].message.content if (response and response.choices) else None
+
+    if not content or not content.strip():
+        logger.error("AI returned empty response content.")
+        raise RuntimeError("AI returned an invalid content plan. Please try again.")
+
+    try:
+        raw_json_dict = extract_json_payload(content)
+
+        if isinstance(raw_json_dict, dict):
+            if "total_posts" not in raw_json_dict and "post_count" in raw_json_dict:
+                raw_json_dict["total_posts"] = raw_json_dict["post_count"]
+
+            if "posts" in raw_json_dict and isinstance(raw_json_dict["posts"], dict):
+                raw_json_dict["posts"] = list(raw_json_dict["posts"].values())
+
+        validated_response = GeneratedContentResponse.model_validate(raw_json_dict)
+    except Exception as e:
+        logger.error(f"Pydantic Validation Error: {e}")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
     # Post count matching & normalization on validated_response
@@ -377,7 +378,7 @@ def generate_content(request: GenerateContentRequest) -> GeneratedContentRespons
 def regenerate_single_post(request: "RegeneratePostRequest") -> "GeneratedPost":
     """
     Generate a fresh replacement for a single specific post in the content calendar.
-    Uses client.beta.chat.completions.parse with GeneratedPost response_format as primary path.
+    Uses client.chat.completions.create with response_format={"type": "json_object"}.
     """
     from app.models.content import GeneratedPost
     strategy = get_industry_strategy(request.industry)
@@ -425,36 +426,33 @@ Return ONLY a raw valid JSON object matching this schema:
 }}
 """
 
-    validated_post = None
-
     try:
-        completion = client.beta.chat.completions.parse(
+        response = client.chat.completions.create(
             model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            response_format=GeneratedPost,
+            response_format={"type": "json_object"},
             temperature=0.8,
             max_tokens=1000
         )
-        if completion and completion.choices:
-            message = completion.choices[0].message
-            if getattr(message, "parsed", None) is not None:
-                validated_post = message.parsed
-                logger.info("Structured Output Primary Path: Single post parsed successfully.")
-            elif getattr(message, "content", None):
-                logger.warning("Structured Output Primary Path: single post message.parsed was None. Falling back.")
-                raw_json_dict = extract_json_payload(message.content)
-                validated_post = GeneratedPost.model_validate(raw_json_dict)
     except RuntimeError:
         raise
     except Exception as e:
         logger.error(f"AI single post completion failed: {e}")
         raise RuntimeError("AI generation failed. Please try again.")
 
-    if not validated_post:
-        logger.error("AI returned invalid single post.")
+    content = response.choices[0].message.content if (response and response.choices) else None
+    if not content or not content.strip():
+        logger.error("AI returned empty single post response.")
+        raise RuntimeError("AI returned an invalid content plan. Please try again.")
+
+    try:
+        raw_json_dict = extract_json_payload(content)
+        validated_post = GeneratedPost.model_validate(raw_json_dict)
+    except Exception as e:
+        logger.error(f"Failed to validate single post regeneration: {e}")
         raise RuntimeError("AI returned an invalid content plan. Please try again.")
 
     return validated_post
