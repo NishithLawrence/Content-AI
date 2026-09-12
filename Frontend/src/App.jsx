@@ -10,6 +10,8 @@ import ResultsDashboard from './components/ResultsDashboard';
 import Toast from './components/Toast';
 import './App.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
 function App() {
   // Generator State management
   const [selectedIndustry, setSelectedIndustry] = useState('');
@@ -34,7 +36,7 @@ function App() {
   // Check backend health endpoint
   const checkHealth = async () => {
     try {
-      const response = await fetch('/api/health');
+      const response = await fetch(`${API_BASE_URL}/api/health`);
       if (response.ok) {
         setBackendStatus('connected');
       } else {
@@ -130,7 +132,7 @@ function App() {
         formData.append('files', file);
       });
 
-      const response = await fetch('/api/generate-content', {
+      const response = await fetch(`${API_BASE_URL}/api/generate-content`, {
         method: 'POST',
         body: formData,
       });
@@ -196,7 +198,7 @@ function App() {
 
     setRegeneratingPostNumber(post.post_number);
     try {
-      const response = await fetch('/api/regenerate-post', {
+      const response = await fetch(`${API_BASE_URL}/api/regenerate-post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
