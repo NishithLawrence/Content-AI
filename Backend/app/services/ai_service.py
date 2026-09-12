@@ -45,6 +45,62 @@ def get_ai_client_and_model():
     client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     return client, model_name
 
+def strip_json_comments_and_sanitize(text: str) -> str:
+    """
+    State-machine based comment stripper that safely strips:
+    - Single-line comments // ...
+    - Block comments /* ... */
+    - Trailing commas before } or ]
+    
+    CRITICAL: Ignores // and /* inside quoted JSON strings, strictly preserving
+    URLs like "https://example.com" or "http://example.com".
+    """
+    result = []
+    i = 0
+    length = len(text)
+    in_string = False
+    escape = False
+
+    while i < length:
+        char = text[i]
+
+        if in_string:
+            result.append(char)
+            if escape:
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+            i += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            result.append(char)
+            i += 1
+            continue
+
+        if char == '/' and i + 1 < length and text[i + 1] == '/':
+            i += 2
+            while i < length and text[i] not in ('\r', '\n'):
+                i += 1
+            continue
+
+        if char == '/' and i + 1 < length and text[i + 1] == '*':
+            i += 2
+            while i + 1 < length and not (text[i] == '*' and text[i + 1] == '/'):
+                i += 1
+            i += 2
+            continue
+
+        result.append(char)
+        i += 1
+
+    cleaned_text = "".join(result)
+    cleaned_text = re.sub(r',\s*([\}\]])', r'\1', cleaned_text)
+    return cleaned_text
+
 def extract_json_payload(raw_text: str) -> dict:
     """
     Safely extract and parse JSON payload from raw LLM output.
@@ -67,10 +123,8 @@ def extract_json_payload(raw_text: str) -> dict:
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             text = text[start_idx:end_idx + 1].strip()
 
-    # 3. Clean JS comments and trailing commas that Gemini occasionally outputs
-    text = re.sub(r'^\s*//.*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'/\*[\s\S]*?\*/', '', text)
-    text = re.sub(r',\s*([\}\]])', r'\1', text)
+    # 3. Clean JS comments and trailing commas using string-aware state-machine
+    text = strip_json_comments_and_sanitize(text)
 
     # 4. Parse JSON
     try:
@@ -79,13 +133,12 @@ def extract_json_payload(raw_text: str) -> dict:
         logger.error(f"7. Extracted JSON Is Valid: False. Parsing Error: {e}. Raw content snippet: {raw_text[:200]}")
         raise ValueError(f"Invalid JSON format from AI: {e}")
 
-    # 5. Handle outer wrapper dictionary if LLM wrapped response in a single key e.g. {"content_plan": {...}}
-    if isinstance(data, dict):
-        if "posts" not in data:
-            for key in ["content_plan", "data", "result", "response"]:
-                if key in data and isinstance(data[key], dict) and "posts" in data[key]:
-                    data = data[key]
-                    break
+    # 5. Dynamically unwrap outer dictionary if inner dictionary contains "posts"
+    if isinstance(data, dict) and "posts" not in data:
+        for val in data.values():
+            if isinstance(val, dict) and "posts" in val:
+                data = val
+                break
 
     return data
 
@@ -294,6 +347,11 @@ def generate_content(request: GenerateContentRequest) -> GeneratedContentRespons
         if isinstance(raw_json_dict, dict):
             if "total_posts" not in raw_json_dict and "post_count" in raw_json_dict:
                 raw_json_dict["total_posts"] = raw_json_dict["post_count"]
+
+            # Normalize posts: if posts is a dictionary, convert its values to a list BEFORE validation
+            if "posts" in raw_json_dict:
+                if isinstance(raw_json_dict["posts"], dict):
+                    raw_json_dict["posts"] = list(raw_json_dict["posts"].values())
 
             # Adjust post list length if Gemini generated extra or missing posts
             if "posts" in raw_json_dict and isinstance(raw_json_dict["posts"], list):
